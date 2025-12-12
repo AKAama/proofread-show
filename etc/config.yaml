@@ -1,0 +1,8 @@
+port: 8080
+db:
+  host: 170.18.9.206
+  port: 30337
+  username: root
+  password: Sudy.web123
+  database: cmplus_qa
+  maxConnections: 100

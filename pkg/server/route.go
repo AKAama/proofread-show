@@ -35,10 +35,8 @@ func InitRouter(engine *gin.Engine) {
 	// 加载 HTML 模板
 	engine.LoadHTMLGlob("pkg/tpl/*.tpl")
 
-	// 文章列表
-	engine.GET("/articles", GetArticleList)
-	// 文章详情
-	engine.GET("/articles/:id", GetArticleDetail)
+	// 所有文章平铺展示
+	engine.GET("/articles", GetAllArticles)
 	// 根路径重定向到文章列表
 	engine.GET("/", func(c *gin.Context) {
 		c.Redirect(302, "/articles")

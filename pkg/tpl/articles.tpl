@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文章校阅详情 - {{.article.ArticleID}}</title>
+    <link rel=”shortcut icon” href=”favicon.ico” type=”image/x-icon” />
+    <title>文章校阅展示</title>
     <style>
         * {
             margin: 0;
@@ -17,32 +18,37 @@
             line-height: 1.8;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+            text-align: center;
+        }
+        .article-item {
             background: white;
             padding: 30px;
+            margin-bottom: 30px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .header {
-            margin-bottom: 30px;
-            padding-bottom: 20px;
+        .article-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
             border-bottom: 2px solid #eee;
         }
-        .header h1 {
+        .article-header h2 {
             color: #333;
-            font-size: 24px;
-            margin-bottom: 10px;
+            font-size: 20px;
+            margin-bottom: 5px;
         }
-        .header a {
-            color: #4CAF50;
-            text-decoration: none;
+        .article-id {
+            color: #666;
             font-size: 14px;
         }
-        .header a:hover {
-            text-decoration: underline;
-        }
-        .content {
+        .article-content {
             font-size: 16px;
             color: #333;
             white-space: pre-wrap;
@@ -103,29 +109,34 @@
             color: #ffd54f;
             font-size: 13px;
         }
-        .back-link {
-            display: inline-block;
-            margin-top: 30px;
-            padding: 10px 20px;
-            background: #4CAF50;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            transition: background 0.3s;
-        }
-        .back-link:hover {
-            background: #45a049;
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>文章 ID: {{.article.ArticleID}}</h1>
-            <a href="/articles">← 返回文章列表</a>
-        </div>
-        <div class="content">{{.highlightedContent | safeHTML}}</div>
-        <a href="/articles" class="back-link">返回列表</a>
+        <h1>文章校阅展示</h1>
+        {{if .articles}}
+            {{range .articles}}
+            <div class="article-item">
+                <div class="article-header">
+                    {{if .Title}}
+                    <h2>{{.Title}}</h2>
+                    {{else}}
+                    <h2>文章 ID: {{.ArticleID}}</h2>
+                    {{end}}
+                    <div class="article-id">Article ID: {{.ArticleID}}</div>
+                </div>
+                <div class="article-content">{{.HighlightedContent | safeHTML}}</div>
+            </div>
+            {{end}}
+        {{else}}
+            <div class="empty-state">暂无文章</div>
+        {{end}}
     </div>
 </body>
 </html>

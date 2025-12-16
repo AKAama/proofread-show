@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"proofread-show/pkg/db"
@@ -33,119 +32,78 @@ type ArticleItem struct {
 
 // ArticleDetailResponse 文章详情响应
 type ArticleDetailResponse struct {
-	ArticleID int64                    `json:"articleId"`
-	Content   string                   `json:"content"`
-	Results   []model.TProofreadResult `json:"results"`
+	ArticleID          int64                    `json:"articleId"`
+	Content            string                   `json:"content"`
+	Results            []model.TProofreadResult `json:"results"`
+	HighlightedContent string                   `json:"highlightedContent"`
 }
 
-// GetArticleList 获取文章列表（分页）
-func GetArticleList(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+// ArticleWithHighlight 带高亮的文章
+type ArticleWithHighlight struct {
+	ArticleID          int64  `json:"articleId"`
+	Title              string `json:"title"`
+	HighlightedContent string `json:"highlightedContent"`
+}
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-
-	offset := (page - 1) * pageSize
-
-	var articles []ArticleItem
-	var total int64
-
+// GetAllArticles 获取所有文章（平铺展示）
+func GetAllArticles(c *gin.Context) {
 	// 查询有校阅数据的文章ID（去重）
-	query := db.GetDB().
+	var articleIDs []int64
+	if err := db.GetDB().
 		Table(model.TableNameTProofreadResult).
 		Select("DISTINCT article_id").
-		Where("article_id IS NOT NULL")
-
-	// 获取总数
-	if err := query.Count(&total).Error; err != nil {
-		zap.S().Errorf("查询文章总数失败: %s", err.Error())
+		Where("article_id IS NOT NULL").
+		Pluck("article_id", &articleIDs).Error; err != nil {
+		zap.S().Errorf("查询文章ID列表失败: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
 
-	// 分页查询
-	if err := query.
-		Offset(offset).
-		Limit(pageSize).
-		Scan(&articles).Error; err != nil {
-		zap.S().Errorf("查询文章列表失败: %s", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+	if len(articleIDs) == 0 {
+		c.HTML(http.StatusOK, "articles.tpl", gin.H{
+			"articles": []ArticleWithHighlight{},
+		})
 		return
 	}
 
-	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
+	// 查询所有文章及其校阅结果
+	var articlesWithHighlight []ArticleWithHighlight
 
-	response := ArticleListResponse{
-		Articles:   articles,
-		Total:      total,
-		Page:       page,
-		PageSize:   pageSize,
-		TotalPages: totalPages,
+	for _, articleID := range articleIDs {
+		// 查询文章内容
+		var article model.TArticle
+		if err := db.GetDB().
+			Where("article_id = ?", articleID).
+			First(&article).Error; err != nil {
+			zap.S().Warnf("查询文章 %d 失败: %s", articleID, err.Error())
+			continue
+		}
+
+		// 查询校阅结果
+		var results []model.TProofreadResult
+		if err := db.GetDB().
+			Where("article_id = ?", articleID).
+			Order("start ASC").
+			Find(&results).Error; err != nil {
+			zap.S().Warnf("查询文章 %d 的校阅结果失败: %s", articleID, err.Error())
+			continue
+		}
+
+		// 去除原文中的 HTML 标签
+		plainContent := stripHTMLTags(article.Content)
+
+		// 生成高亮后的内容
+		highlightedContent := highlightContent(plainContent, results)
+
+		articlesWithHighlight = append(articlesWithHighlight, ArticleWithHighlight{
+			ArticleID:          articleID,
+			Title:              article.Title,
+			HighlightedContent: highlightedContent,
+		})
 	}
 
-	// 生成分页页码数组（带省略号）
-	pages := generatePaginationPages(response.Page, response.TotalPages)
-
-	c.HTML(http.StatusOK, "article_list.tpl", gin.H{
-		"articles":   response.Articles,
-		"total":      response.Total,
-		"page":       response.Page,
-		"pageSize":   response.PageSize,
-		"totalPages": response.TotalPages,
-		"pages":      pages,
-	})
-}
-
-// GetArticleDetail 获取文章详情（包含校阅结果）
-func GetArticleDetail(c *gin.Context) {
-	articleIDStr := c.Param("id")
-	articleID, err := strconv.ParseInt(articleIDStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的文章ID"})
-		return
-	}
-
-	// 查询文章内容
-	var article model.TArticle
-	if err := db.GetDB().
-		Where("article_id = ?", articleID).
-		First(&article).Error; err != nil {
-		zap.S().Errorf("查询文章失败: %s", err.Error())
-		c.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
-		return
-	}
-
-	// 查询校阅结果
-	var results []model.TProofreadResult
-	if err := db.GetDB().
-		Where("article_id = ?", articleID).
-		Order("start ASC").
-		Find(&results).Error; err != nil {
-		zap.S().Errorf("查询校阅结果失败: %s", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
-		return
-	}
-
-	// 去除原文中的 HTML 标签
-	plainContent := stripHTMLTags(article.Content)
-
-	// 生成高亮后的内容
-	highlightedContent := highlightContent(plainContent, results)
-
-	response := ArticleDetailResponse{
-		ArticleID: article.ArticleID,
-		Content:   article.Content,
-		Results:   results,
-	}
-
-	c.HTML(http.StatusOK, "article_detail.tpl", gin.H{
-		"article":            response,
-		"highlightedContent": highlightedContent,
+	c.HTML(http.StatusOK, "articles.tpl", gin.H{
+		"articles": articlesWithHighlight,
 	})
 }
 
@@ -198,6 +156,8 @@ func highlightContent(content string, results []model.TProofreadResult) string {
 	// 恢复 tooltip-content span
 	escaped = strings.ReplaceAll(escaped, "&lt;span class=&#34;tooltip-content&#34;&gt;", "<span class=\"tooltip-content\">")
 	escaped = strings.ReplaceAll(escaped, "&lt;span class=&#34;tooltip-content tooltip-message&#34;&gt;", "<span class=\"tooltip-content tooltip-message\">")
+	// 恢复 tooltip-message span
+	escaped = strings.ReplaceAll(escaped, "&lt;span class=&#34;tooltip-message&#34;&gt;", "<span class=\"tooltip-message\">")
 	// 恢复 tooltip-suggestion span
 	escaped = strings.ReplaceAll(escaped, "&lt;span class=&#34;tooltip-suggestion&#34;&gt;", "<span class=\"tooltip-suggestion\">")
 	// 恢复所有结束标签
@@ -231,7 +191,7 @@ func buildTooltip(result model.TProofreadResult) string {
 	// 处理消息
 	if result.Message != "" {
 		messageText := html.EscapeString(result.Message)
-		parts = append(parts, fmt.Sprintf(`<span class="tooltip-content tooltip-message">%s</span>`, messageText))
+		parts = append(parts, fmt.Sprintf(`<span class="tooltip-content">原因: <span class="tooltip-message">%s</span></span>`, messageText))
 	}
 
 	if len(parts) == 0 {
@@ -239,66 +199,6 @@ func buildTooltip(result model.TProofreadResult) string {
 	}
 
 	return strings.Join(parts, "")
-}
-
-// generatePaginationPages 生成分页页码数组，中间用省略号
-func generatePaginationPages(currentPage, totalPages int) []interface{} {
-	const maxVisiblePages = 7 // 最多显示7个页码（包括省略号）
-
-	if totalPages <= maxVisiblePages {
-		// 如果总页数不多，直接返回所有页码
-		pages := make([]interface{}, totalPages)
-		for i := 1; i <= totalPages; i++ {
-			pages[i-1] = i
-		}
-		return pages
-	}
-
-	var pages []interface{}
-
-	// 总是显示第一页
-	pages = append(pages, 1)
-
-	// 计算开始和结束页码
-	startPage := currentPage - 2
-	endPage := currentPage + 2
-
-	if startPage < 2 {
-		startPage = 2
-		endPage = startPage + 4
-		if endPage > totalPages-1 {
-			endPage = totalPages - 1
-			startPage = endPage - 4
-			if startPage < 2 {
-				startPage = 2
-			}
-		}
-	} else if endPage > totalPages-1 {
-		endPage = totalPages - 1
-		startPage = endPage - 4
-		if startPage < 2 {
-			startPage = 2
-		}
-	}
-
-	// 如果开始页码不是2，添加省略号
-	if startPage > 2 {
-		pages = append(pages, "...")
-	}
-
-	// 添加中间页码
-	for i := startPage; i <= endPage; i++ {
-		pages = append(pages, i)
-	}
-
-	// 如果结束页码不是倒数第二页，添加省略号
-	if endPage < totalPages-1 {
-		pages = append(pages, "...")
-	}
-
-	pages = append(pages, totalPages)
-
-	return pages
 }
 
 // stripHTMLTags 去除 HTML 标签，只保留文本内容
